@@ -16,56 +16,63 @@ export async function getAcademiaData(netid: string, pass: string) {
     }
 
     browser = await puppeteer.launch({
-      args: [...chromium.args, '--disable-web-security', '--disable-features=IsolateOrigins', '--site-per-process'],
+      args: [
+        ...chromium.args,
+        '--disable-web-security',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-notifications',
+        '--disable-extensions'
+      ],
       executablePath: chromePath,
       headless: isLocal ? false : true,
     });
 
     const page = await browser.newPage();
-    
-    // Use a very specific User Agent to avoid bot detection
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
 
-    // 1. Visit with a longer timeout and "commit" wait
-    await page.goto('https://academia.srmist.edu.in/', { 
-      waitUntil: 'domcontentloaded', 
-      timeout: 60000 
+    // --- SPEED OPTIMIZATION: BLOCK HEAVY ASSETS ---
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const resourceType = req.resourceType();
+      if (['image', 'stylesheet', 'font', 'media', 'other'].includes(resourceType)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
     });
 
-    // 2. Extra "Breath" - wait 2 seconds for JS to kick in
-    await new Promise(r => setTimeout(r, 2000));
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
 
-    // 3. Robust Selector Check
-    try {
-      await page.waitForSelector('#txtUsername', { visible: true, timeout: 15000 });
-    } catch (e) {
-      // DEBUG: If it fails, let's see what the page actually looks like
-      const content = await page.content();
-      console.log("Page HTML Snippet:", content.substring(0, 500));
-      throw new Error("Academia login fields did not load. The site might be blocking the cloud connection.");
-    }
+    // Visit Academia - "domcontentloaded" is much faster than "networkidle2"
+    await page.goto('https://academia.srmist.edu.in/', { 
+      waitUntil: 'domcontentloaded', 
+      timeout: 30000 
+    });
 
     // --- LOGIN FLOW ---
-    await page.type('#txtUsername', netid, { delay: 50 }); // Type like a human
+    await page.waitForSelector('#txtUsername', { visible: true, timeout: 10000 });
+    await page.type('#txtUsername', netid);
     await page.click('#btnLogin'); 
 
-    await page.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
-    await page.type('#txtPassword', pass, { delay: 50 });
+    await page.waitForSelector('#txtPassword', { visible: true, timeout: 10000 });
+    await page.type('#txtPassword', pass);
     await page.click('#btnLogin');
 
-    // Handle session conflicts
+    // Handle Session Termination
     try {
       const terminateBtn = 'input[value*="Terminate"], #btnTerminate'; 
-      await page.waitForSelector(terminateBtn, { timeout: 5000 });
+      await page.waitForSelector(terminateBtn, { timeout: 3000 });
       await page.click(terminateBtn);
     } catch (e) {
-      // Normal flow if no popup
+      // No active session found, skip
     }
 
-    await page.waitForNavigation({ waitUntil: 'networkidle0' });
+    // Wait for the redirect to complete
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Scrape Attendance
-    await page.goto('https://academia.srmist.edu.in/attendance.jsp', { waitUntil: 'networkidle2' });
+    await page.goto('https://academia.srmist.edu.in/attendance.jsp', { waitUntil: 'domcontentloaded' });
     const html = await page.content();
     const $ = cheerio.load(html);
 
@@ -88,6 +95,7 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    throw error;
+    console.error("SRM Flux Error:", error.message);
+    throw new Error(`Login failed: ${error.message}`);
   }
 }

@@ -1,7 +1,8 @@
 {
     "functions": {
-      "src/app/api/auth/route.ts": {
-        "maxDuration": 60
+      "app/api/auth/route.ts": {
+        "maxDuration": 60,
+        "memory": 1024
       }
     }
   }
