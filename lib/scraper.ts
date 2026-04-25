@@ -12,66 +12,55 @@ export async function getAcademiaData(netid: string, pass: string) {
       : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
 
     browser = await puppeteer.launch({
-      args: [...chromium.args, '--disable-web-security', '--no-sandbox'],
+      args: [
+        ...chromium.args,
+        '--disable-blink-features=AutomationControlled', // Hides the "Navigator.webdriver" flag
+        '--disable-infobars',
+        '--window-size=1920,1080',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+      ],
       executablePath: chromePath,
       headless: isLocal ? false : true,
     });
 
     const page = await browser.newPage();
     
-    // Stealth & Resource Control
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      if (['image', 'font'].includes(req.resourceType())) req.abort();
-      else req.continue();
+    // Mimic a very common Windows Chrome user
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+
+    // Remove the "Headless" fingerprint
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
-    // 1. Direct hit to the Attendance App
-    console.log("Flux: Targeting Attendance Module...");
-    await page.goto('https://academia.srmist.edu.in/#View:My_Attendance', { 
+    console.log("Flux: Initiating secure tunnel...");
+    
+    // Go to the main portal first to get cookies
+    await page.goto('https://academia.srmist.edu.in/', { 
       waitUntil: 'networkidle2', 
       timeout: 60000 
     });
 
-    // 2. The "Smart Wait" - Academia's login box often lives inside an iframe
-    // This helper function looks for the selector in the main page AND all frames
-    const findSelector = async (selector: string) => {
-      const start = Date.now();
-      while (Date.now() - start < 30000) { // 30 second retry loop
-        const mainEl = await page.$(selector);
-        if (mainEl) return page;
+    // Check for #txtUsername with a very long timeout
+    await page.waitForSelector('#txtUsername', { visible: true, timeout: 30000 });
 
-        for (const frame of page.frames()) {
-          const frameEl = await frame.$(selector);
-          if (frameEl) return frame;
-        }
-        await new Promise(r => setTimeout(r, 1000));
-      }
-      throw new Error(`Selector ${selector} not found in any frame.`);
-    };
+    // --- LOGIN ---
+    await page.type('#txtUsername', netid, { delay: 100 }); // Slow down typing
+    await page.click('#btnLogin'); 
 
-    // 3. LOGIN PHASE
-    console.log("Flux: Searching for Login Portal...");
-    const targetFrame = await findSelector('#txtUsername');
+    await page.waitForSelector('#txtPassword', { visible: true, timeout: 20000 });
+    await page.type('#txtPassword', pass, { delay: 100 });
+    await page.click('#btnLogin');
 
-    await targetFrame.type('#txtUsername', netid, { delay: 30 });
-    await targetFrame.click('#btnLogin'); 
-
-    await targetFrame.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
-    await targetFrame.type('#txtPassword', pass, { delay: 30 });
-    await targetFrame.click('#btnLogin');
-
-    // 4. Handle "Terminate Session"
+    // Handle session conflict
     try {
-      await targetFrame.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
-      await targetFrame.click('input[value*="Terminate"]');
-      console.log("Flux: Session conflict cleared.");
+      await page.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
+      await page.click('input[value*="Terminate"]');
     } catch (e) {}
 
-    // 5. WAIT FOR REDIRECT & EXTRACT
-    // We wait specifically for the Attendance table to render
-    await page.waitForSelector('table', { timeout: 40000 });
+    // Wait for actual table content
+    await page.waitForSelector('table', { timeout: 45000 });
     
     const html = await page.content();
     const $ = cheerio.load(html);
@@ -83,7 +72,6 @@ export async function getAcademiaData(netid: string, pass: string) {
         const name = $(td[1]).text().trim();
         const present = parseInt($(td[2]).text().trim()) || 0;
         const absent = parseInt($(td[3]).text().trim()) || 0;
-        
         if (name && !isNaN(present) && name !== "Subject Name") {
           subjects.push({ name, present, absent });
         }
@@ -95,7 +83,7 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    console.error("Critical Failure:", error.message);
-    throw error;
+    console.error("Critical Tunnel Failure:", error.message);
+    throw new Error("ACADEMIA_TIMEOUT");
   }
 }
