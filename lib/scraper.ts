@@ -1,93 +1,80 @@
-import * as cheerio from 'cheerio';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import chromium from '@sparticuz/chromium-min';
+
+puppeteer.use(StealthPlugin());
 
 export async function getAcademiaData(netid: string, pass: string) {
-  const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-  
+  let browser;
   try {
-    console.log(`[FLUX] Executing AcademiaX-Logic for: ${netid}`);
-
-    // 1. Get the landing page to capture the ZOHO_ID and Semester Tokens
-    const landing = await fetch("https://academia.srmist.edu.in/", {
-      headers: { "User-Agent": userAgent }
-    });
-    const initialCookies = landing.headers.get("set-cookie") || "";
-    const htmlContent = await landing.text();
-    const $ = cheerio.load(htmlContent);
-
-    // AcademiaX secret: These fields change every semester
-    const sharedBy = $('input[name="sharedBy"]').val();
-    const appLinkName = $('input[name="appLinkName"]').val();
-
-    if (!sharedBy || !appLinkName) {
-      throw new Error("Unable to resolve SRM Semester Tokens.");
-    }
-
-    // 2. The Direct Login Request
-    const loginResponse = await fetch("https://academia.srmist.edu.in/accounts/signin.do", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Cookie": initialCookies,
-        "User-Agent": userAgent,
-        "Referer": "https://academia.srmist.edu.in/",
-      },
-      body: new URLSearchParams({
-        "username": netid,
-        "password": pass,
-        "sharedBy": sharedBy as string,
-        "appLinkName": appLinkName as string,
-        "is_ajax": "true",
-        "rememberme": "false"
-      })
+    const isLocal = process.env.NODE_ENV === 'development';
+    
+    browser = await (puppeteer as any).launch({
+      args: [
+        ...chromium.args,
+        '--disable-web-security',
+        '--no-sandbox',
+        // --- PORTALX SECRET: FAKE RESIDENTIAL IP ---
+        // If you have a proxy, add: '--proxy-server=http://your-proxy-ip:port'
+      ],
+      executablePath: isLocal 
+        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`),
+      headless: chromium.headless,
     });
 
-    const loginCookies = loginResponse.headers.get("set-cookie") || "";
-    const finalCookies = `${initialCookies}; ${loginCookies}`;
+    const page = await browser.newPage();
 
-    // 3. Fetch the Attendance HTML
-    const attendanceRes = await fetch("https://academia.srmist.edu.in/attendance.jsp", {
-      headers: {
-        "Cookie": finalCookies,
-        "User-Agent": userAgent,
-      }
+    // Patch fingerprints
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
-    const attendanceHtml = await attendanceRes.text();
+    await page.goto('https://academia.srmist.edu.in/#View:My_Attendance', { 
+      waitUntil: 'networkidle2', 
+      timeout: 60000 
+    });
 
-    // 4. Parse the data
-    const $data = cheerio.load(attendanceHtml);
-    const subjects: any[] = [];
+    // Handle the frame-switching Zoho login
+    const userSelector = '#txtUsername';
+    await page.waitForSelector(userSelector, { visible: true, timeout: 30000 });
+    
+    await page.type(userSelector, netid, { delay: 100 }); // Human-like typing
+    await page.click('#btnLogin');
 
-    $data('table tr').each((i, el) => {
-      const td = $data(el).find('td');
-      if (td.length >= 4) {
-        const name = $data(td[1]).text().trim();
-        const present = parseInt($data(td[2]).text().trim());
-        const absent = parseInt($data(td[3]).text().trim());
+    await page.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
+    await page.type('#txtPassword', pass, { delay: 100 });
+    await page.click('#btnLogin');
 
-        if (name && !isNaN(present) && name !== "Subject Name") {
-          const total = present + absent;
-          subjects.push({
-            name,
-            present,
-            absent,
-            percentage: total > 0 ? ((present / total) * 100).toFixed(2) : "0",
-            margin: Math.floor((present / 0.75) - total) // The "Bunk" Margin
-          });
+    // Handle the Terminate Session popup (Common in SRM)
+    try {
+      await page.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
+      await page.click('input[value*="Terminate"]');
+    } catch (e) {}
+
+    // Wait for data
+    await page.waitForSelector('table', { timeout: 30000 });
+    const subjects = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('table tr'));
+      return rows.map(row => {
+        const td = row.querySelectorAll('td');
+        if (td.length >= 4) {
+          return {
+            name: td[1].innerText.trim(),
+            present: td[2].innerText.trim(),
+            absent: td[3].innerText.trim()
+          };
         }
-      }
+        return null;
+      }).filter(x => x && x.name !== "Subject Name");
     });
 
-    if (subjects.length === 0) {
-        // If login failed, the HTML usually contains the login form again
-        if (attendanceHtml.includes("txtUsername")) throw new Error("INVALID_CREDENTIALS");
-        throw new Error("ACADEMIA_EMPTY_DATA");
-    }
-
+    await browser.close();
     return subjects;
 
   } catch (error: any) {
-    console.error("[FLUX CRITICAL]:", error.message);
+    if (browser) await browser.close();
+    console.error("PortalX-Style Failure:", error.message);
     throw error;
   }
 }
