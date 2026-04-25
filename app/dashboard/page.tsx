@@ -1,175 +1,155 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from "react";
 import { 
-  TrendingUp, 
-  GraduationCap, 
-  Layout, 
-  Calendar, 
-  Clock, 
-  Bell, 
+  LayoutDashboard, 
+  CalendarDays, 
   BookOpen, 
-  AlertCircle, 
-  CheckCircle2,
-  LogOut
-} from 'lucide-react';
-
-// --- SUB-COMPONENTS ---
-
-const StatCard = ({ title, value, icon: Icon, color }: any) => (
-  <div className="bg-[#0a0a0a] border border-zinc-800/50 p-6 rounded-[2rem] hover:border-zinc-700 transition-all shadow-2xl group">
-    <div className="flex justify-between items-start">
-      <div>
-        <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">{title}</p>
-        <h3 className={`text-3xl font-bold mt-2 tracking-tighter ${color}`}>{value}</h3>
-      </div>
-      <div className="p-3 bg-zinc-900/80 rounded-2xl border border-zinc-800 group-hover:scale-110 transition-transform">
-        <Icon className="w-5 h-5 text-zinc-300" />
-      </div>
-    </div>
-  </div>
-);
-
-const PredictionCard = ({ subject, present, absent }: { subject: string, present: number, absent: number }) => {
-  const total = present + absent;
-  const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
-  const isBelow = percentage < 75;
-
-  let val = 0;
-  if (isBelow) {
-    val = Math.ceil(((0.75 * total) - present) / 0.25);
-  } else {
-    val = Math.floor((present - (0.75 * total)) / 0.75);
-  }
-
-  return (
-    <div className="p-6 bg-[#0d0d0d] border border-zinc-800/60 rounded-[2.2rem] mb-4 hover:border-zinc-700 transition-all group">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5">
-        <div>
-          <h4 className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors uppercase tracking-tight">{subject}</h4>
-          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mt-1">Official Academia Record</p>
-        </div>
-        <div className="text-right">
-          <div className="flex items-center gap-2 justify-end">
-            {isBelow ? <AlertCircle className="w-4 h-4 text-red-500" /> : <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-            <span className={`text-3xl font-black ${isBelow ? 'text-red-500' : 'text-emerald-500'}`}>{percentage}%</span>
-          </div>
-        </div>
-      </div>
-      
-      <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-5">
-        <div className={`h-full transition-all duration-1000 ${isBelow ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${percentage}%` }}></div>
-      </div>
-      
-      <div className="flex justify-between items-center bg-black/40 p-4 rounded-2xl border border-zinc-800/30">
-        <div className="flex gap-4">
-          <div className="flex flex-col"><span className="text-[9px] text-zinc-500 font-bold uppercase">P</span><span className="text-xs font-bold text-emerald-500">{present}</span></div>
-          <div className="flex flex-col"><span className="text-[9px] text-zinc-500 font-bold uppercase">A</span><span className="text-xs font-bold text-red-500">{absent}</span></div>
-          <div className="flex flex-col"><span className="text-[9px] text-zinc-500 font-bold uppercase">T</span><span className="text-xs font-bold text-zinc-300">{total}</span></div>
-        </div>
-        <div className="text-right">
-            <p className="text-[9px] text-zinc-500 font-bold uppercase">{isBelow ? 'Required' : 'Margin'}</p>
-            <p className={`text-sm font-black ${isBelow ? 'text-red-400' : 'text-emerald-400'}`}>{val} Classes</p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// --- MAIN DASHBOARD ---
+  Calculator, 
+  UserCircle, 
+  LogOut, 
+  ChevronRight, 
+  Zap,
+  ShieldCheck,
+  Clock
+} from "lucide-react";
 
 export default function Dashboard() {
-  const [attendanceData, setAttendanceData] = useState<any[]>([]);
-  const [userName, setUserName] = useState("STUDENT");
-  const [overall, setOverall] = useState(0);
-  const router = useRouter();
+  const [data, setData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const rawData = localStorage.getItem('flux_data');
-    const name = localStorage.getItem('user_name');
-
-    if (!rawData) {
-      router.push('/login');
-      return;
-    }
-
-    const parsedData = JSON.parse(rawData);
-    setAttendanceData(parsedData);
-    if (name) setUserName(name.toUpperCase());
-
-    // Calculate overall average
-    const totalPresent = parsedData.reduce((acc: number, curr: any) => acc + curr.present, 0);
-    const totalClasses = parsedData.reduce((acc: number, curr: any) => acc + (curr.present + curr.absent), 0);
-    setOverall(totalClasses > 0 ? Math.round((totalPresent / totalClasses) * 100) : 0);
-  }, [router]);
-
-  const handleLogout = () => {
-    localStorage.clear();
-    router.push('/login');
-  };
+  // Example stats - in a real app, these would be calculated from 'data'
+  const stats = [
+    { label: "ATTENDANCE", value: "84.2%", color: "text-emerald-400", glow: "shadow-emerald-500/20" },
+    { label: "OVERALL MARKS", value: "88.5", color: "text-blue-400", glow: "shadow-blue-500/20" },
+    { label: "TOTAL SUBJECTS", value: "9", color: "text-purple-400", glow: "shadow-purple-500/20" },
+    { label: "DAY ORDER", value: "1", color: "text-orange-400", glow: "shadow-orange-500/20" },
+  ];
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 lg:p-12 max-w-7xl mx-auto">
-      {/* Navbar */}
-      <nav className="flex justify-between items-center mb-16">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 bg-blue-600 rounded-2xl flex items-center justify-center font-black italic shadow-[0_0_30px_rgba(37,99,235,0.3)]">F</div>
-          <span className="font-black text-2xl tracking-tighter uppercase italic">Flux</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <button onClick={handleLogout} className="p-3 bg-zinc-900 border border-zinc-800 rounded-2xl hover:bg-red-500/10 hover:border-red-500/50 transition-all text-zinc-500 hover:text-red-500">
-            <LogOut className="w-5 h-5" />
-          </button>
-          <div className="h-12 w-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center font-black text-blue-500 underline decoration-2">
-            {userName[0]}
+    <div className="min-h-screen bg-[#020617] text-slate-200 flex overflow-hidden">
+      {/* --- SIDEBAR --- */}
+      <aside className="w-64 bg-slate-900/40 backdrop-blur-xl border-r border-white/5 flex flex-col p-6 hidden md:flex">
+        <div className="flex items-center gap-3 mb-10 px-2">
+          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+            <ShieldCheck size={20} className="text-white" />
           </div>
+          <span className="text-xl font-bold tracking-tighter text-white">SRM FLUX</span>
         </div>
-      </nav>
 
-      {/* Hero */}
-      <header className="mb-12">
-        <h1 className="text-5xl md:text-7xl font-black tracking-tighter uppercase leading-none">
-          Welcome, <span className="text-blue-600">{userName}</span>
-        </h1>
-        <p className="text-zinc-500 mt-4 font-bold tracking-widest text-sm flex items-center gap-2">
-           <Calendar className="w-4 h-4" /> SESSION: FEB - JUN 2026
-        </p>
-      </header>
+        <nav className="flex-1 space-y-2">
+          {[
+            { icon: LayoutDashboard, label: "Overview", active: true },
+            { icon: CalendarDays, label: "Attendance", active: false },
+            { icon: BookOpen, label: "Marks & Grades", active: false },
+            { icon: Clock, label: "Timetable", active: false },
+            { icon: Calculator, label: "GPA Calculator", active: false },
+          ].map((item) => (
+            <button
+              key={item.label}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${
+                item.active 
+                ? "bg-blue-600/10 text-blue-400 border border-blue-500/20" 
+                : "text-slate-500 hover:bg-white/5 hover:text-slate-200"
+              }`}
+            >
+              <item.icon size={20} />
+              <span className="font-medium">{item.label}</span>
+            </button>
+          ))}
+        </nav>
 
-      {/* Bento Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
-        <StatCard title="Overall" value={`${overall}%`} icon={TrendingUp} color="text-emerald-400" />
-        <StatCard title="Subjects" value={attendanceData.length} icon={BookOpen} color="text-blue-400" />
-        <StatCard title="Day Order" value="DO 2" icon={Clock} color="text-purple-400" />
-        <StatCard title="Status" value="ACTIVE" icon={Layout} color="text-amber-400" />
-      </div>
+        <div className="mt-auto pt-6 border-t border-white/5">
+          <button className="flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-red-400 transition-colors w-full">
+            <LogOut size={20} />
+            <span className="font-medium">Logout System</span>
+          </button>
+        </div>
+      </aside>
 
-      {/* Attendance List */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="lg:col-span-2">
-          <h2 className="text-2xl font-black mb-8 tracking-tight uppercase flex items-center gap-3">
-            <span className="h-3 w-3 bg-blue-600 rounded-full animate-pulse"></span>
-            Real-time Analysis
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {attendanceData.map((item, idx) => (
-              <PredictionCard 
-                key={idx}
-                subject={item.name}
-                present={item.present}
-                absent={item.absent}
-              />
+      {/* --- MAIN CONTENT --- */}
+      <main className="flex-1 overflow-y-auto p-8 relative">
+        {/* Background Glow */}
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/5 blur-[120px] pointer-events-none" />
+
+        {/* Header */}
+        <header className="flex justify-between items-center mb-10">
+          <div>
+            <h2 className="text-3xl font-bold text-white tracking-tight">Welcome back, Aarav</h2>
+            <p className="text-slate-500 mt-1">Here is your academic status for Saturday, April 25.</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="bg-slate-900/50 border border-white/10 px-4 py-2 rounded-full flex items-center gap-2 text-xs font-bold text-blue-400 uppercase tracking-widest">
+              <Zap size={14} fill="currentColor" /> PRO ACCESS
+            </div>
+            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center font-bold text-white">
+              A
+            </div>
+          </div>
+        </header>
+
+        {/* Stats Grid */}
+        <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+          {stats.map((stat) => (
+            <div key={stat.label} className={`bg-slate-900/40 backdrop-blur-md border border-white/5 p-6 rounded-[24px] hover:border-white/10 transition-all ${stat.glow}`}>
+              <p className="text-[10px] font-black tracking-[0.2em] text-slate-500 mb-2 uppercase">{stat.label}</p>
+              <div className="flex items-end justify-between">
+                <h3 className={`text-3xl font-bold ${stat.color} tracking-tight`}>{stat.value}</h3>
+                <ChevronRight size={18} className="text-slate-700" />
+              </div>
+            </div>
+          ))}
+        </section>
+
+        {/* Schedule / Tasks Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+            <h4 className="text-lg font-bold text-white flex items-center gap-2">
+              <BookOpen size={20} className="text-blue-500" /> Current Courses
+            </h4>
+            
+            {/* Example Course List */}
+            {[
+              { name: "Design and Analysis of Algorithms", attendance: 84, margin: 4, prof: "Mahendran M" },
+              { name: "Probability and Queueing Theory", attendance: 76, margin: 1, prof: "Dr. Saurabh Kumar" },
+              { name: "Cybersecurity Forensics", attendance: 92, margin: 8, prof: "Dr. Rajesh K" },
+            ].map((course) => (
+              <div key={course.name} className="group bg-slate-900/40 border border-white/5 p-5 rounded-2xl flex items-center justify-between hover:bg-slate-800/40 transition-all">
+                <div className="space-y-1">
+                  <h5 className="font-bold text-white group-hover:text-blue-400 transition-colors">{course.name}</h5>
+                  <p className="text-xs text-slate-500">{course.prof} • Theory</p>
+                </div>
+                <div className="flex items-center gap-8">
+                   <div className="text-right">
+                      <p className="text-2xl font-black text-white">{course.attendance}%</p>
+                      <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                        Margin: <span className={course.margin > 2 ? "text-emerald-500" : "text-red-500"}>{course.margin}</span>
+                      </p>
+                   </div>
+                   <div className="w-12 h-12 rounded-full border-2 border-slate-800 flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-full border-b-2 border-blue-500 animate-pulse" />
+                   </div>
+                </div>
+              </div>
             ))}
           </div>
+
+          {/* Right Sidebar Info */}
+          <div className="space-y-6">
+            <h4 className="text-lg font-bold text-white flex items-center gap-2">
+              <CalendarDays size={20} className="text-blue-500" /> Quick Glance
+            </h4>
+            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 rounded-[32px] text-white shadow-xl shadow-blue-900/20">
+               <p className="text-sm font-medium opacity-80 mb-1">Upcoming Milestone</p>
+               <h5 className="text-xl font-bold mb-4">Internal Assessment 2</h5>
+               <div className="bg-white/20 backdrop-blur-md rounded-xl p-3 flex justify-between items-center">
+                  <span className="text-xs font-bold uppercase tracking-wider">Starts in</span>
+                  <span className="text-lg font-black">4 Days</span>
+               </div>
+            </div>
+          </div>
         </div>
-      </div>
-      
-      <footer className="mt-20 py-10 border-t border-zinc-900 text-center">
-        <p className="text-[10px] font-black text-zinc-700 tracking-[0.5em] uppercase">
-          SRM Flux • Data Synced via Secure Tunnel
-        </p>
-      </footer>
+      </main>
     </div>
   );
 }
