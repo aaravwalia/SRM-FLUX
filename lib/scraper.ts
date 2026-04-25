@@ -4,18 +4,29 @@ export async function getAcademiaData(netid: string, pass: string) {
   const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
   try {
-    console.log(`[FLUX] Initiating secure tunnel for: ${netid} (Region: BOM)`);
+    console.log(`[FLUX] Initiating Tunnel for ${netid} in Mumbai Region...`);
 
-    // 1. PHASE 1: Establish Session
-    // We hit the portal to collect the 'JSESSIONID' and 'IAMCSRF' cookies
+    // 1. STAGE 1: GRAB HIDDEN TOKENS & COOKIES
+    // We must load the page once to get the unique 'sharedBy' and 'appLinkName'
     const landingRes = await fetch("https://academia.srmist.edu.in/", {
       headers: { "User-Agent": userAgent },
     });
 
+    const landingHtml = await landingRes.text();
+    const $landing = cheerio.load(landingHtml);
     const initialCookies = landingRes.headers.get("set-cookie") || "";
 
-    // 2. PHASE 2: Authentication Handshake
-    // We send the credentials to the sign-in endpoint
+    // Extract dynamic hidden fields
+    const sharedBy = $landing('input[name="sharedBy"]').val();
+    const appLinkName = $landing('input[name="appLinkName"]').val();
+
+    if (!sharedBy || !appLinkName) {
+      console.error("[FLUX] Failed to extract tokens. SRM might be under maintenance.");
+      throw new Error("SRM_MAINTENANCE_OR_BLOCKED");
+    }
+
+    // 2. STAGE 2: AUTHENTICATION
+    // We send the form data EXACTLY like the browser does
     const loginRes = await fetch("https://academia.srmist.edu.in/accounts/signin.do", {
       method: "POST",
       headers: {
@@ -28,72 +39,61 @@ export async function getAcademiaData(netid: string, pass: string) {
       body: new URLSearchParams({
         "username": netid,
         "password": pass,
+        "sharedBy": sharedBy as string,
+        "appLinkName": appLinkName as string,
         "is_ajax": "true",
-        "rememberme": "false",
+        "rememberme": "false"
       }),
     });
 
-    const loginCookies = loginRes.headers.get("set-cookie") || "";
-    const sessionCookies = `${initialCookies}; ${loginCookies}`;
+    const authCookies = loginRes.headers.get("set-cookie") || "";
+    const allCookies = `${initialCookies}; ${authCookies}`;
 
-    // 3. PHASE 3: Data Extraction
-    // After login, we fetch the raw attendance JSP table
+    // 3. STAGE 3: DATA EXTRACTION
     const attendanceRes = await fetch("https://academia.srmist.edu.in/attendance.jsp", {
       headers: {
-        "Cookie": sessionCookies,
+        "Cookie": allCookies,
         "User-Agent": userAgent,
-        "Referer": "https://academia.srmist.edu.in/#View:My_Attendance",
       }
     });
 
     const html = await attendanceRes.text();
 
-    // 4. SECURITY CHECK: Did we actually get in?
-    // If the HTML still contains login fields, the credentials or cookies failed.
-    if (html.includes("txtUsername") || html.includes("login-box") || html.length < 1000) {
-      console.error("[FLUX] Authentication rejected by Academia firewall.");
-      throw new Error("INVALID_AUTH_OR_SESSION_BLOCKED");
+    // Verification: If we see "txtUsername", the login failed.
+    if (html.includes("txtUsername") || html.includes("login-box")) {
+       throw new Error("INVALID_CREDENTIALS");
     }
 
-    // 5. PARSING: Extract attendance with Cheerio
+    // 4. PARSING
     const $ = cheerio.load(html);
     const subjects: any[] = [];
 
-    // Find the attendance table and loop through rows
     $('table tr').each((i, el) => {
       const td = $(el).find('td');
-      // Academia table structure: [Code, Name, Present, Absent, Total, %]
       if (td.length >= 4) {
         const name = $(td[1]).text().trim();
-        const present = parseInt($(td[2]).text().trim());
-        const absent = parseInt($(td[3]).text().trim());
-
-        // Validate data is actual attendance and not a header
-        if (name && !isNaN(present) && name !== "Course Name" && name !== "Subject Name") {
+        const present = parseInt($(td[2]).text().trim()) || 0;
+        const absent = parseInt($(td[3]).text().trim()) || 0;
+        
+        if (name && !isNaN(present) && name !== "Subject Name") {
           const total = present + absent;
-          const percentage = total > 0 ? ((present / total) * 100).toFixed(2) : "0";
-          
           subjects.push({
             name,
             present,
             absent,
-            percentage,
-            // Calculate Bunk Margin (classes you can skip while staying above 75%)
-            margin: Math.floor((present / 0.75) - total)
+            percentage: total > 0 ? ((present / total) * 100).toFixed(2) : "0",
+            margin: Math.floor((present / 0.75) - total) // Bunk Margin
           });
         }
       }
     });
 
-    if (subjects.length === 0) {
-      throw new Error("EMPTY_DATA_RETURNED");
-    }
+    if (subjects.length === 0) throw new Error("NO_DATA_FOUND");
 
-    console.log(`[FLUX] Tunnel successful. Extracted ${subjects.length} subjects.`);
     return subjects;
 
   } catch (error: any) {
-    console.error("[FLUX] Scraper Critical Failure:", error.message);
+    console.error("[FLUX ERROR]:", error.message);
     throw error;
   }
 }
