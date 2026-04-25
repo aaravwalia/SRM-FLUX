@@ -10,8 +10,13 @@ export async function getAcademiaData(netid: string, pass: string) {
 
     // 1. Browser Configuration
     browser = await puppeteer.launch({
-      args: isLocal ? [] : chromium.args,
-      defaultViewport: isLocal ? null : chromium.defaultViewport,
+        args: isLocal ? [] : chromium.args,
+        // Removed defaultViewport to fix the Type Error
+        executablePath: isLocal 
+          ? process.env.LOCAL_CHROME_PATH 
+          : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`),
+        headless: isLocal ? false : chromium.headless,
+      });
       // On Local: Uses path from .env.local
       // On Vercel: Uses the downloaded Chromium binary
       executablePath: isLocal 
