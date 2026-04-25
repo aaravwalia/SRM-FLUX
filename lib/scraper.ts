@@ -8,69 +8,69 @@ export async function getAcademiaData(netid: string, pass: string) {
   try {
     const isLocal = process.env.NODE_ENV === 'development';
 
-    // 1. Browser Configuration
+    // 1. Resolve Chrome Path outside of the launch object to satisfy Turbopack
+    let chromePath: string;
+    if (isLocal) {
+      // Pulls from your .env.local file
+      chromePath = process.env.LOCAL_CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    } else {
+      // Cloud-optimized Chromium for Vercel
+      chromePath = await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
+    }
+
+    // 2. Launch Browser
     browser = await puppeteer.launch({
-        args: isLocal ? [] : chromium.args,
-        // Removed defaultViewport to fix the Type Error
-        executablePath: isLocal 
-          ? process.env.LOCAL_CHROME_PATH 
-          : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`),
-        headless: isLocal ? false : chromium.headless,
-      });
-      // On Local: Uses path from .env.local
-      // On Vercel: Uses the downloaded Chromium binary
-      executablePath: isLocal 
-        ? process.env.LOCAL_CHROME_PATH 
-        : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`),
-      headless: isLocal ? false : chromium.headless,
+      args: isLocal ? [] : chromium.args,
+      executablePath: chromePath,
+      headless: isLocal ? false : (chromium.headless as any),
     });
 
     const page = await browser.newPage();
     
-    // Set User Agent to mimic a real browser session
+    // Set User Agent to prevent Academia from flagging the session as a bot
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
 
-    // 2. Visit Academia
+    // 3. Navigate to Academia
     await page.goto('https://academia.srmist.edu.in/', { 
       waitUntil: 'networkidle2', 
       timeout: 60000 
     });
 
-    // --- STEP 1: Email Phase ---
+    // --- LOGIN FLOW ---
+    
+    // Step 1: Enter NetID
     await page.waitForSelector('#txtUsername', { visible: true });
     await page.type('#txtUsername', netid);
     await page.click('#btnLogin'); 
 
-    // --- STEP 2: Password Phase ---
-    // Waiting for the password field to appear after the email submission
+    // Step 2: Enter Password (waiting for it to appear/be enabled)
     await page.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
     await page.type('#txtPassword', pass);
     await page.click('#btnLogin');
 
-    // --- STEP 3: Handle Session Management ---
-    // Cybersecurity Tip: SRM often forces you to terminate other active sessions.
+    // Step 3: Handle "Terminate Other Sessions" popup if it exists
     try {
       const terminateBtn = 'input[value*="Terminate"], #btnTerminate'; 
       await page.waitForSelector(terminateBtn, { timeout: 5000 });
       await page.click(terminateBtn);
-      console.log("Flux: Active sessions terminated.");
+      console.log("Flux: Sessions terminated successfully.");
     } catch (e) {
-      console.log("Flux: No session conflict found.");
+      console.log("Flux: No session conflict, proceeding...");
     }
 
-    // 3. Wait for full navigation to the student dashboard
+    // Wait for the main portal to load
     await page.waitForNavigation({ waitUntil: 'networkidle0' });
 
-    // 4. Scrape Attendance Data
+    // 4. Scrape Attendance
     await page.goto('https://academia.srmist.edu.in/attendance.jsp', { waitUntil: 'networkidle2' });
     const html = await page.content();
     const $ = cheerio.load(html);
 
     const subjects: any[] = [];
     
-    // Parsing the SRM Attendance Table
+    // Standard Academia table parsing
     $('table tr').each((i, el) => {
-       if (i === 0) return; // Skip Header row
+       if (i === 0) return; // Skip Header
        const td = $(el).find('td');
        
        if (td.length >= 4) {
@@ -78,7 +78,7 @@ export async function getAcademiaData(netid: string, pass: string) {
          const present = parseInt($(td[2]).text().trim()) || 0;
          const absent = parseInt($(td[3]).text().trim()) || 0;
          
-         // Validation: Ignore placeholder or empty rows
+         // Only push valid subject rows
          if (name && name !== "Subject Name" && !isNaN(present)) {
             subjects.push({ name, present, absent });
          }
@@ -90,7 +90,7 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    console.error("SRM Flux Scraper Failure:", error.message);
-    throw new Error(`Connection to Academia failed: ${error.message}`);
+    console.error("SRM Flux Scraper Error:", error.message);
+    throw new Error(`Scraper failed: ${error.message}`);
   }
 }
