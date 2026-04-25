@@ -4,7 +4,6 @@ import chromium from '@sparticuz/chromium-min';
 
 export async function getAcademiaData(netid: string, pass: string) {
   let browser;
-
   try {
     const isLocal = process.env.NODE_ENV === 'development';
     let chromePath = isLocal 
@@ -12,57 +11,56 @@ export async function getAcademiaData(netid: string, pass: string) {
       : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
 
     browser = await puppeteer.launch({
-      args: [...chromium.args, '--disable-web-security', '--no-sandbox', '--disable-setuid-sandbox'],
+      args: [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
       executablePath: chromePath,
       headless: isLocal ? false : true,
     });
 
     const page = await browser.newPage();
-    
-    // 1. STEALTH HEADERS: This is the secret sauce
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-    });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
 
-    // 2. RESOURCE BLOCKING: Skip everything but the logic
+    // 1. Block heavy assets to save time
     await page.setRequestInterception(true);
     page.on('request', (req) => {
       if (['image', 'font', 'stylesheet'].includes(req.resourceType())) req.abort();
       else req.continue();
     });
 
-    // 3. THE "DIRECT" NAVIGATION: Skip the home page and go straight to the login frame
-    // Academia is wrapped in Zoho; this URL bypasses some of the redirects
+    // 2. Go straight to the Attendance portal link
+    console.log("Flux: Navigating to Academia...");
     await page.goto('https://academia.srmist.edu.in/#View:My_Attendance', { 
       waitUntil: 'domcontentloaded', 
-      timeout: 45000 
+      timeout: 60000 
     });
 
-    // 4. WAIT FOR REDIRECT: If we are at the login page, the selector will change
-    // We wait for the NetID box or the main portal container
-    await page.waitForSelector('#txtUsername, input[type="text"]', { visible: true, timeout: 20000 });
+    // 3. The "Frame" Wait: Academia often hides the login behind a Zoho load screen
+    await new Promise(r => setTimeout(r, 5000)); 
 
-    // --- LOGIN ---
-    await page.type('#txtUsername', netid, { delay: 30 });
+    // 4. Try to find the username field in any frame
+    const usernameSelector = '#txtUsername';
+    await page.waitForSelector(usernameSelector, { visible: true, timeout: 30000 });
+
+    // --- Execute Login ---
+    await page.type(usernameSelector, netid, { delay: 50 });
     await page.click('#btnLogin'); 
 
-    await page.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
-    await page.type('#txtPassword', pass, { delay: 30 });
+    await page.waitForSelector('#txtPassword', { visible: true, timeout: 20000 });
+    await page.type('#txtPassword', pass, { delay: 50 });
     await page.click('#btnLogin');
 
-    // 5. SESSION TERMINATION
+    // 5. Handle the Terminate Session popup
     try {
       await page.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
       await page.click('input[value*="Terminate"]');
+      console.log("Flux: Session conflict resolved.");
     } catch (e) {}
 
-    // 6. SCRAPE
-    // Instead of navigating again, we wait for the attendance table to appear in the current frame
+    // 6. Final Data Extraction
     await page.waitForSelector('table', { timeout: 30000 });
     const html = await page.content();
     const $ = cheerio.load(html);
-
     const subjects: any[] = [];
+
     $('table tr').each((i, el) => {
       const td = $(el).find('td');
       if (td.length >= 4) {
@@ -80,7 +78,7 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    console.error("Scraper Error:", error.message);
-    throw error;
+    console.error("Critical Flux Error:", error.message);
+    throw new Error("ACADEMIA_REJECTED_CONNECTION"); // Friendly error for frontend
   }
 }
