@@ -7,92 +7,87 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   try {
     const isLocal = process.env.NODE_ENV === 'development';
+    let chromePath = isLocal 
+      ? (process.env.LOCAL_CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
+      : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
 
-    // 1. Path Resolution
-    let chromePath: string;
-    if (isLocal) {
-      chromePath = process.env.LOCAL_CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-    } else {
-      chromePath = await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
-    }
-
-    // 2. Launch with Stealth Arguments
     browser = await puppeteer.launch({
-      args: [
-        ...chromium.args,
-        '--disable-web-security',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-      ],
+      args: [...chromium.args, '--disable-web-security', '--no-sandbox'],
       executablePath: chromePath,
       headless: isLocal ? false : true,
     });
 
     const page = await browser.newPage();
-
-    // 3. MOBILE STEALTH: Mimic an iPhone to bypass "Data Center" blocks
-    await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1');
-    await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
-
-    // 4. RESOURCE BLOCKING: Speed up load by 300%
+    
+    // Stealth & Resource Control
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
     await page.setRequestInterception(true);
     page.on('request', (req) => {
-      if (['image', 'font', 'media'].includes(req.resourceType())) {
-        req.abort();
-      } else {
-        req.continue();
-      }
+      if (['image', 'font'].includes(req.resourceType())) req.abort();
+      else req.continue();
     });
 
-    // 5. NAVIGATION: Go straight to the internal attendance view
-    // This URL forces Academia to skip unnecessary home page redirects
+    // 1. Direct hit to the Attendance App
+    console.log("Flux: Targeting Attendance Module...");
     await page.goto('https://academia.srmist.edu.in/#View:My_Attendance', { 
-      waitUntil: 'domcontentloaded', 
+      waitUntil: 'networkidle2', 
       timeout: 60000 
     });
 
-    // Wait for the portal to "settle" (Crucial for Vercel)
-    await new Promise(r => setTimeout(r, 4000));
+    // 2. The "Smart Wait" - Academia's login box often lives inside an iframe
+    // This helper function looks for the selector in the main page AND all frames
+    const findSelector = async (selector: string) => {
+      const start = Date.now();
+      while (Date.now() - start < 30000) { // 30 second retry loop
+        const mainEl = await page.$(selector);
+        if (mainEl) return page;
 
-    // 6. LOGIN FLOW
-    const userField = '#txtUsername';
-    await page.waitForSelector(userField, { visible: true, timeout: 25000 });
-    
-    await page.type(userField, netid, { delay: 40 });
-    await page.click('#btnLogin'); 
+        for (const frame of page.frames()) {
+          const frameEl = await frame.$(selector);
+          if (frameEl) return frame;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      throw new Error(`Selector ${selector} not found in any frame.`);
+    };
 
-    await page.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
-    await page.type('#txtPassword', pass, { delay: 40 });
-    await page.click('#btnLogin');
+    // 3. LOGIN PHASE
+    console.log("Flux: Searching for Login Portal...");
+    const targetFrame = await findSelector('#txtUsername');
 
-    // Handle "Terminate Other Sessions" popup
+    await targetFrame.type('#txtUsername', netid, { delay: 30 });
+    await targetFrame.click('#btnLogin'); 
+
+    await targetFrame.waitForSelector('#txtPassword', { visible: true, timeout: 15000 });
+    await targetFrame.type('#txtPassword', pass, { delay: 30 });
+    await targetFrame.click('#btnLogin');
+
+    // 4. Handle "Terminate Session"
     try {
-      const terminateBtn = 'input[value*="Terminate"]';
-      await page.waitForSelector(terminateBtn, { timeout: 5000 });
-      await page.click(terminateBtn);
-      console.log("Flux: Sessions terminated.");
-    } catch (e) {
-      // No active session found
-    }
+      await targetFrame.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
+      await targetFrame.click('input[value*="Terminate"]');
+      console.log("Flux: Session conflict cleared.");
+    } catch (e) {}
 
-    // 7. EXTRACTION: Wait for the data table
-    await page.waitForSelector('table', { timeout: 30000 });
+    // 5. WAIT FOR REDIRECT & EXTRACT
+    // We wait specifically for the Attendance table to render
+    await page.waitForSelector('table', { timeout: 40000 });
+    
     const html = await page.content();
     const $ = cheerio.load(html);
-
     const subjects: any[] = [];
+
     $('table tr').each((i, el) => {
-       const td = $(el).find('td');
-       if (td.length >= 4) {
-         const name = $(td[1]).text().trim();
-         const present = parseInt($(td[2]).text().trim()) || 0;
-         const absent = parseInt($(td[3]).text().trim()) || 0;
-         
-         if (name && !isNaN(present) && name !== "Subject Name") {
-            subjects.push({ name, present, absent });
-         }
-       }
+      const td = $(el).find('td');
+      if (td.length >= 4) {
+        const name = $(td[1]).text().trim();
+        const present = parseInt($(td[2]).text().trim()) || 0;
+        const absent = parseInt($(td[3]).text().trim()) || 0;
+        
+        if (name && !isNaN(present) && name !== "Subject Name") {
+          subjects.push({ name, present, absent });
+        }
+      }
     });
 
     await browser.close();
@@ -100,7 +95,7 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    console.error("SRM Flux Error:", error.message);
-    throw new Error(error.message);
+    console.error("Critical Failure:", error.message);
+    throw error;
   }
 }
