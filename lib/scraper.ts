@@ -2,12 +2,11 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import chromium from '@sparticuz/chromium-min';
 
-// Register stealth plugin once (TS-safe way)
+// Register stealth plugin
 try {
-  const stealth = StealthPlugin();
-  puppeteer.use(stealth);
+  puppeteer.use(StealthPlugin());
 } catch (e) {
-  // Plugin already in use
+  // Already initialized
 }
 
 export async function getAcademiaData(netid: string, pass: string) {
@@ -15,39 +14,37 @@ export async function getAcademiaData(netid: string, pass: string) {
   try {
     const isLocal = process.env.NODE_ENV === 'development';
     
-    // Resolve Chromium executable path for Vercel vs Local
     const executablePath = isLocal 
       ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
       : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
 
-    // Cast to any to avoid complex Puppeteer-Extra vs Core type conflicts during build
+    // We define the viewport manually to avoid the 'chromium.defaultViewport' error
+    const viewport = { width: 1280, height: 720 };
+
     browser = await (puppeteer as any).launch({
       args: [...chromium.args, '--disable-web-security', '--no-sandbox'],
       executablePath: executablePath,
       headless: isLocal ? false : true, 
-      defaultViewport: chromium.defaultViewport,
+      defaultViewport: viewport,
     });
 
     const page = await browser.newPage();
 
-    // 1. Stealth Overrides: Hide 'automation' signatures
+    // Stealth: Hide bot identity
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
-    console.log("[FLUX] Initiating stealth tunnel to Academia...");
+    console.log("[FLUX] Initiating stealth tunnel...");
     
-    // 2. Navigation
     await page.goto('https://academia.srmist.edu.in/#View:My_Attendance', { 
       waitUntil: 'networkidle2', 
       timeout: 60000 
     });
 
-    // 3. Login Logic
+    // Login logic
     const userSelector = '#txtUsername';
     await page.waitForSelector(userSelector, { visible: true, timeout: 30000 });
-    
-    // Human-like typing delay
     await page.type(userSelector, netid, { delay: 75 });
     await page.click('#btnLogin');
 
@@ -55,16 +52,13 @@ export async function getAcademiaData(netid: string, pass: string) {
     await page.type('#txtPassword', pass, { delay: 75 });
     await page.click('#btnLogin');
 
-    // 4. Handle SRM 'Multiple Session' Interrupts
+    // Handle session interruptions
     try {
       await page.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
       await page.click('input[value*="Terminate"]');
-      console.log("[FLUX] Existing sessions terminated.");
-    } catch (e) {
-      // No active sessions to terminate
-    }
+    } catch (e) {}
 
-    // 5. Scrape Attendance Table
+    // Extract table data
     await page.waitForSelector('table', { timeout: 30000 });
     
     const subjects = await page.evaluate(() => {
@@ -76,15 +70,13 @@ export async function getAcademiaData(netid: string, pass: string) {
           const present = parseInt(td[2].innerText.trim());
           const absent = parseInt(td[3].innerText.trim());
           
-          if (name && !isNaN(present) && name !== "Subject Name" && name !== "Course Name") {
+          if (name && !isNaN(present) && name !== "Subject Name") {
             const total = present + absent;
-            const percentage = total > 0 ? ((present / total) * 100).toFixed(2) : "0.00";
             return {
               name,
               present,
               absent,
-              percentage,
-              // Calculate Margin for 75%
+              percentage: total > 0 ? ((present / total) * 100).toFixed(2) : "0",
               margin: Math.floor((present / 0.75) - total)
             };
           }
@@ -98,7 +90,7 @@ export async function getAcademiaData(netid: string, pass: string) {
 
   } catch (error: any) {
     if (browser) await browser.close();
-    console.error("[FLUX CRITICAL]:", error.message);
+    console.error("[FLUX ERROR]:", error.message);
     throw error;
   }
 }
