@@ -1,96 +1,105 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-import chromium from '@sparticuz/chromium-min';
-
-// Register stealth plugin
-try {
-  puppeteer.use(StealthPlugin());
-} catch (e) {
-  // Already initialized
-}
+import * as cheerio from 'cheerio';
 
 export async function getAcademiaData(netid: string, pass: string) {
-  let browser;
+  const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
   try {
-    const isLocal = process.env.NODE_ENV === 'development';
-    
-    const executablePath = isLocal 
-      ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-      : await chromium.executablePath(`https://github.com/Sparticuz/chromium/releases/download/v123.0.1/chromium-v123.0.1-pack.tar`);
+    console.log(`[FLUX] Initiating Mumbai-Region Tunnel: ${netid}`);
 
-    // We define the viewport manually to avoid the 'chromium.defaultViewport' error
-    const viewport = { width: 1280, height: 720 };
-
-    browser = await (puppeteer as any).launch({
-      args: [...chromium.args, '--disable-web-security', '--no-sandbox'],
-      executablePath: executablePath,
-      headless: isLocal ? false : true, 
-      defaultViewport: viewport,
+    // 1. STAGE 1: THE HANDSHAKE
+    // We hit the landing page to scrape the dynamic Zoho tokens for 2026
+    const landingRes = await fetch("https://academia.srmist.edu.in/", {
+      headers: { "User-Agent": userAgent },
+      cache: 'no-store'
     });
 
-    const page = await browser.newPage();
+    const landingHtml = await landingRes.text();
+    const $landing = cheerio.load(landingHtml);
+    const initialCookies = landingRes.headers.get("set-cookie") || "";
 
-    // Stealth: Hide bot identity
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    // Extracting dynamic 2026 tokens
+    const sharedBy = $landing('input[name="sharedBy"]').val();
+    const appLinkName = $landing('input[name="appLinkName"]').val();
+
+    if (!sharedBy || !appLinkName) {
+      console.error("[FLUX] Portal might be under maintenance or tokens hidden.");
+      throw new Error("SRM_PORTAL_TIMEOUT");
+    }
+
+    // 2. STAGE 2: THE AUTHENTICATION
+    // Sending encoded form data exactly like the login button does
+    const loginRes = await fetch("https://academia.srmist.edu.in/accounts/signin.do", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Cookie": initialCookies,
+        "User-Agent": userAgent,
+        "Origin": "https://academia.srmist.edu.in",
+        "Referer": "https://academia.srmist.edu.in/",
+      },
+      body: new URLSearchParams({
+        "username": netid,
+        "password": pass,
+        "sharedBy": sharedBy as string,
+        "appLinkName": appLinkName as string,
+        "is_ajax": "true",
+        "rememberme": "false"
+      }),
     });
 
-    console.log("[FLUX] Initiating stealth tunnel...");
-    
-    await page.goto('https://academia.srmist.edu.in/#View:My_Attendance', { 
-      waitUntil: 'networkidle2', 
-      timeout: 60000 
+    const loginCookies = loginRes.headers.get("set-cookie") || "";
+    const sessionCookies = `${initialCookies}; ${loginCookies}`;
+
+    // 3. STAGE 3: THE DATA GRAB
+    const attendanceRes = await fetch("https://academia.srmist.edu.in/attendance.jsp", {
+      headers: {
+        "Cookie": sessionCookies,
+        "User-Agent": userAgent,
+        "Referer": "https://academia.srmist.edu.in/#View:My_Attendance",
+      }
     });
 
-    // Login logic
-    const userSelector = '#txtUsername';
-    await page.waitForSelector(userSelector, { visible: true, timeout: 30000 });
-    await page.type(userSelector, netid, { delay: 75 });
-    await page.click('#btnLogin');
+    const html = await attendanceRes.text();
 
-    await page.waitForSelector('#txtPassword', { visible: true, timeout: 20000 });
-    await page.type('#txtPassword', pass, { delay: 75 });
-    await page.click('#btnLogin');
+    // 4. VERIFICATION
+    if (html.includes("txtUsername") || html.includes("login-box") || html.length < 500) {
+      console.error("[FLUX] Authentication rejected. Check NetID/Pass or IP status.");
+      throw new Error("INVALID_CREDENTIALS");
+    }
 
-    // Handle session interruptions
-    try {
-      await page.waitForSelector('input[value*="Terminate"]', { timeout: 5000 });
-      await page.click('input[value*="Terminate"]');
-    } catch (e) {}
+    // 5. PARSING THE RESPONSE
+    const $ = cheerio.load(html);
+    const subjects: any[] = [];
 
-    // Extract table data
-    await page.waitForSelector('table', { timeout: 30000 });
-    
-    const subjects = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tr'));
-      return rows.map(row => {
-        const td = row.querySelectorAll('td');
-        if (td.length >= 4) {
-          const name = td[1].innerText.trim();
-          const present = parseInt(td[2].innerText.trim());
-          const absent = parseInt(td[3].innerText.trim());
-          
-          if (name && !isNaN(present) && name !== "Subject Name") {
-            const total = present + absent;
-            return {
-              name,
-              present,
-              absent,
-              percentage: total > 0 ? ((present / total) * 100).toFixed(2) : "0",
-              margin: Math.floor((present / 0.75) - total)
-            };
-          }
+    $('table tr').each((i, el) => {
+      const td = $(el).find('td');
+      // SRM Table Layout: [S.No, Subject, Present, Absent, Total, %]
+      if (td.length >= 4) {
+        const name = $(td[1]).text().trim();
+        const present = parseInt($(td[2]).text().trim()) || 0;
+        const absent = parseInt($(td[3]).text().trim()) || 0;
+        
+        if (name && !isNaN(present) && name !== "Subject Name" && name !== "Course Name") {
+          const total = present + absent;
+          subjects.push({
+            name,
+            present,
+            absent,
+            total,
+            percentage: total > 0 ? ((present / total) * 100).toFixed(2) : "0.00",
+            margin: Math.floor((present / 0.75) - total)
+          });
         }
-        return null;
-      }).filter(x => x !== null);
+      }
     });
 
-    await browser.close();
+    if (subjects.length === 0) throw new Error("ACADEMIA_NO_DATA");
+
+    console.log(`[FLUX] Success: ${subjects.length} subjects found.`);
     return subjects;
 
   } catch (error: any) {
-    if (browser) await browser.close();
-    console.error("[FLUX ERROR]:", error.message);
+    console.error("[FLUX CRITICAL]:", error.message);
     throw error;
   }
 }
